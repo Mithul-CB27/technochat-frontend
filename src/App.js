@@ -33,6 +33,8 @@ const parseData = (data) => data.map(row => {
   const out = {};
   for (const [k, v] of Object.entries(row)) {
     if (v === null || v === undefined) { out[k] = null; continue; }
+    // ID-like columns always stay as text
+    if (isIdCol(k)) { out[k] = String(v); continue; }
     if (typeof v === "number") { out[k] = v; continue; }
     const s = String(v).trim();
     if (s === "" || /^\d{4}-\d{2}/.test(s) || s.length > 20) { out[k] = v; continue; }
@@ -43,6 +45,7 @@ const parseData = (data) => data.map(row => {
 });
 
 const isAmountCol = (col) => /amount|revenue|price|sales|value/i.test(col) && !/qty|quantity|count|units|orders/i.test(col);
+const isIdCol     = (col) => /\bid\b|_id$|^id_|order_id|customer_id|product_id|variant_id|pincode|zip|phone|mobile/i.test(col);
 const isQtyCol    = (col) => /qty|quantity|count|orders|units/i.test(col);
 
 const formatLabel = (val) => {
@@ -279,6 +282,8 @@ const DataTable = ({ data, filename }) => {
                 {cols.map(c => (
                   <td key={c} style={{ padding:"6px 12px", color:"#ccc", whiteSpace:"nowrap" }}>
                     {row[c] === null || row[c] === undefined ? "—"
+                      : isIdCol(c)
+                        ? String(row[c])
                       : typeof row[c] === "number" && isQtyCol(c)
                         ? row[c].toLocaleString("en-IN")
                       : typeof row[c] === "number" && isAmountCol(c)
