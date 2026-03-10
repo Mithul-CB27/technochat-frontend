@@ -19,7 +19,7 @@ const COLORS = [
 
 // ── Anthropic API ─────────────────────────────────────────────────────────────
 const callClaude = async (messages, system, maxTokens = 1000) => {
-  const res = await fetch("http://localhost:3001/api/claude", {
+  const res = await fetch("https://technochat-server-production.up.railway.app/api/claude", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ model: "claude-sonnet-4-20250514", max_tokens: maxTokens, system, messages }),
@@ -466,7 +466,7 @@ IMPORTANT: Choose table when showing multiple metrics per entity gives more valu
   };
 
   const executeSQL = async (sql) => {
-    const res = await fetch("http://localhost:3001/api/query", {
+    const res = await fetch("https://technochat-server-production.up.railway.app/api/query", {
       method:"POST",
       headers:{ "Content-Type":"application/json" },
       body: JSON.stringify({ sql }),
