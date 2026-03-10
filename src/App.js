@@ -400,7 +400,6 @@ export default function App() {
   const classifyViz = async (q, data) => {
     const cols = Object.keys(data[0] || {});
     const numericCols = cols.filter(c => data.some(r => typeof r[c] === "number"));
-    const textCols    = cols.filter(c => !numericCols.includes(c));
 
     // ── Hard rules (no AI needed) ──────────────────────────────────────────────
     // Single row → key metrics cards
