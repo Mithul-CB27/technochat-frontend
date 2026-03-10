@@ -19,7 +19,7 @@ const COLORS = [
 
 // ── Anthropic API ─────────────────────────────────────────────────────────────
 const callClaude = async (messages, system, maxTokens = 1000) => {
-  const res = await fetch("https://technochat-server.onrender.com/api/claude", {
+  const res = await fetch("http://localhost:3001/api/claude", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ model: "claude-sonnet-4-20250514", max_tokens: maxTokens, system, messages }),
@@ -42,7 +42,7 @@ const parseData = (data) => data.map(row => {
   return out;
 });
 
-const isAmountCol = (col) => /amount|revenue|price|total|sales|value/i.test(col);
+const isAmountCol = (col) => /amount|revenue|price|sales|value/i.test(col) && !/qty|quantity|count|units|orders/i.test(col);
 const isQtyCol    = (col) => /qty|quantity|count|orders|units/i.test(col);
 
 const formatLabel = (val) => {
@@ -98,8 +98,8 @@ const KeyMetrics = ({ data, title }) => {
       <p style={{ color:"#888", fontSize:11, letterSpacing:1.2, textTransform:"uppercase", marginBottom:12 }}>{title}</p>
       <div style={{ display:"flex", flexWrap:"wrap", gap:12 }}>
         {entries.map(([k, v], i) => {
-          const isAmt = isAmountCol(k);
           const isQty = isQtyCol(k);
+          const isAmt = !isQty && isAmountCol(k);
           const num   = typeof v === "number" ? v : parseFloat(String(v).replace(/,/g,""));
           const formatted = !isNaN(num)
             ? isAmt ? `Rs.${num.toLocaleString("en-IN", { maximumFractionDigits:2 })}` : num.toLocaleString("en-IN")
@@ -279,10 +279,10 @@ const DataTable = ({ data, filename }) => {
                 {cols.map(c => (
                   <td key={c} style={{ padding:"6px 12px", color:"#ccc", whiteSpace:"nowrap" }}>
                     {row[c] === null || row[c] === undefined ? "—"
-                      : typeof row[c] === "number" && isAmountCol(c)
-                        ? `Rs.${row[c].toLocaleString("en-IN", { maximumFractionDigits:2 })}`
                       : typeof row[c] === "number" && isQtyCol(c)
                         ? row[c].toLocaleString("en-IN")
+                      : typeof row[c] === "number" && isAmountCol(c)
+                        ? `Rs.${row[c].toLocaleString("en-IN", { maximumFractionDigits:2 })}`
                       : typeof row[c] === "number"
                         ? row[c].toLocaleString("en-IN", { maximumFractionDigits:2 })
                       : typeof row[c] === "string" && /^\d{4}-\d{2}/.test(row[c])
@@ -465,7 +465,7 @@ IMPORTANT: Choose table when showing multiple metrics per entity gives more valu
   };
 
   const executeSQL = async (sql) => {
-    const res = await fetch("https://technochat-server.onrender.com/api/query", {
+    const res = await fetch("http://localhost:3001/api/query", {
       method:"POST",
       headers:{ "Content-Type":"application/json" },
       body: JSON.stringify({ sql }),
