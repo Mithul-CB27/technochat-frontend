@@ -19,7 +19,7 @@ const COLORS = [
 
 // ── Anthropic API ─────────────────────────────────────────────────────────────
 const callClaude = async (messages, system, maxTokens = 1000) => {
-  const res = await fetch("http://localhost:3001/api/claude", {
+  const res = await fetch("https://technochat-server.onrender.com/api/claude", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ model: "claude-sonnet-4-20250514", max_tokens: maxTokens, system, messages }),
@@ -562,7 +562,7 @@ NEVER use y_axes for pie or doughnut.` }],
   };
 
   const executeSQL = async (sql) => {
-    const res = await fetch("http://localhost:3001/api/query", {
+    const res = await fetch("https://technochat-server.onrender.com/api/query", {
       method:"POST",
       headers:{ "Content-Type":"application/json" },
       body: JSON.stringify({ sql }),
