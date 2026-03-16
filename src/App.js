@@ -110,8 +110,6 @@ const baseOpts = (yAxes, { horiz = false, stacked = false } = {}) => {
   };
 };
 
-// Legacy alias so existing code paths still work
-const chartDefaults = (yCol) => baseOpts(yCol);
 
 // ── Key Metrics Cards ────────────────────────────────────────────────────────
 const KeyMetrics = ({ data, title }) => {
