@@ -1,8 +1,8 @@
 import React, { useState, useRef, useEffect } from "react";
-import { Chart as ChartJS, CategoryScale, LinearScale, BarElement, LineElement, PointElement, ArcElement, Tooltip, Legend } from "chart.js";
-import { Bar, Line, Pie } from "react-chartjs-2";
+import { Chart as ChartJS, CategoryScale, LinearScale, BarElement, LineElement, PointElement, ArcElement, Tooltip, Legend, Filler } from "chart.js";
+import { Bar, Line, Doughnut } from "react-chartjs-2";
 
-ChartJS.register(CategoryScale, LinearScale, BarElement, LineElement, PointElement, ArcElement, Tooltip, Legend);
+ChartJS.register(CategoryScale, LinearScale, BarElement, LineElement, PointElement, ArcElement, Tooltip, Legend, Filler);
 
 const ACCENT    = "#FF7F00";
 const ACCENT_DIM = "#e06e00";
@@ -19,7 +19,7 @@ const COLORS = [
 
 // ── Anthropic API ─────────────────────────────────────────────────────────────
 const callClaude = async (messages, system, maxTokens = 1000) => {
-  const res = await fetch("https://technochat-server.onrender.com/api/claude", {
+  const res = await fetch("http://localhost:3001/api/claude", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ model: "claude-sonnet-4-20250514", max_tokens: maxTokens, system, messages }),
@@ -58,38 +58,60 @@ const formatLabel = (val) => {
   return val;
 };
 
-const makeTooltip = (yCol) => ({
+// ── Chart helpers ─────────────────────────────────────────────────────────────
+const fmtVal = (v, col) => {
+  if (typeof v !== "number") return String(v ?? "");
+  if (isAmountCol(col)) return `Rs.${v.toLocaleString("en-IN", { maximumFractionDigits: 2 })}`;
+  if (isQtyCol(col))    return `${v.toLocaleString("en-IN")} units`;
+  return v.toLocaleString("en-IN");
+};
+
+const makeTooltip = (yAxes) => ({
   backgroundColor: SURFACE2,
   borderColor: BORDER,
   borderWidth: 1,
   titleColor: TEXT,
   bodyColor: MUTED,
-  padding: 10,
+  padding: 12,
   callbacks: {
     title: (items) => items[0]?.label || "",
     label: (ctx) => {
-      const v = ctx.parsed.y ?? ctx.parsed;
-      if (typeof v !== "number") return ` ${v}`;
-      if (isAmountCol(yCol)) return ` Rs.${v.toLocaleString("en-IN", { maximumFractionDigits: 2 })}`;
-      if (isQtyCol(yCol))    return ` ${v.toLocaleString("en-IN")} units`;
-      return ` ${v.toLocaleString("en-IN")}`;
+      const col = Array.isArray(yAxes) ? (yAxes[ctx.datasetIndex] || yAxes[0]) : yAxes;
+      const v   = ctx.parsed.y ?? ctx.parsed.x ?? ctx.parsed;
+      const prefix = ctx.dataset.label ? ` ${ctx.dataset.label}: ` : " ";
+      return `${prefix}${fmtVal(v, col)}`;
     }
   }
 });
 
-const chartDefaults = (yCol) => ({
-  responsive: true,
-  maintainAspectRatio: false,
-  animation: false,
-  plugins: {
-    legend: { display: false },
-    tooltip: makeTooltip(yCol),
-  },
-  scales: {
-    x: { ticks: { color: MUTED, font: { size: 11 } }, grid: { color: BORDER } },
-    y: { ticks: { color: MUTED, font: { size: 11 }, callback: v => isAmountCol(yCol) ? `Rs.${v.toLocaleString("en-IN")}` : v.toLocaleString("en-IN") }, grid: { color: BORDER } }
-  }
-});
+const baseOpts = (yAxes, { horiz = false, stacked = false } = {}) => {
+  const primary = Array.isArray(yAxes) ? yAxes[0] : yAxes;
+  const tickFmt = v => fmtVal(Number(v), primary);
+  return {
+    responsive: true,
+    maintainAspectRatio: false,
+    animation: { duration: 500 },
+    interaction: { mode: "index", intersect: false },
+    plugins: {
+      legend: {
+        display: Array.isArray(yAxes) && yAxes.length > 1,
+        position: "top",
+        labels: { color: MUTED, font: { size: 11 }, boxWidth: 12, padding: 16, usePointStyle: true }
+      },
+      tooltip: makeTooltip(yAxes),
+    },
+    scales: horiz ? {
+      x: { stacked, ticks: { color: MUTED, font:{size:11}, callback: tickFmt }, grid: { color: BORDER } },
+      y: { stacked, ticks: { color: MUTED, font:{size:11}, maxRotation: 0 }, grid: { color: "#111" } }
+    } : {
+      x: { stacked, ticks: { color: MUTED, font:{size:11}, maxRotation: 35, autoSkip: true, maxTicksLimit: 12 }, grid: { color: BORDER } },
+      y: { stacked, ticks: { color: MUTED, font:{size:11}, callback: tickFmt }, grid: { color: BORDER } }
+    }
+  };
+};
+
+// Legacy alias so existing code paths still work
+const chartDefaults = (yCol) => baseOpts(yCol);
 
 // ── Key Metrics Cards ────────────────────────────────────────────────────────
 const KeyMetrics = ({ data, title }) => {
@@ -131,92 +153,150 @@ const KeyMetrics = ({ data, title }) => {
 // ── Chart Renderer ────────────────────────────────────────────────────────────
 const ChartRenderer = ({ config, data }) => {
   if (!config || !data?.length) return null;
-  const { chart_type, x_axis, y_axis, title } = config;
-  const labels  = data.map(r => formatLabel(String(r[x_axis] ?? "")));
-  const values  = data.map(r => Number(r[y_axis]) || 0);
-  const bgColors = data.map((_, i) => COLORS[i % COLORS.length]);
+  const { chart_type, x_axis, title } = config;
 
+  // Normalise y_axis / y_axes → always an array
+  const yAxes = config.y_axes
+    ? config.y_axes
+    : config.y_axis ? [config.y_axis] : [];
+
+  if (!yAxes.length || !x_axis) return null;
+  const labels = data.map(r => formatLabel(String(r[x_axis] ?? "")));
+
+  // ── BAR ────────────────────────────────────────────────────────────────────
   if (chart_type === "bar") {
-    const horiz = data.length > 6;
-    const sorted = horiz
-      ? [...data].sort((a,b) => (Number(a[y_axis])||0) - (Number(b[y_axis])||0))
-      : [...data].sort((a,b) => (Number(b[y_axis])||0) - (Number(a[y_axis])||0));
-    const sLabels = sorted.map(r => formatLabel(String(r[x_axis] ?? "")));
-    const sValues = sorted.map(r => Number(r[y_axis]) || 0);
-    const base = chartDefaults(y_axis);
-    const horizTooltip = {
-      ...base.plugins.tooltip,
-      callbacks: {
-        title: (items) => items[0]?.label || "",
-        label: (ctx) => {
-          const v = ctx.parsed.x ?? ctx.parsed.y;
-          if (typeof v !== "number") return ` ${v}`;
-          if (isAmountCol(y_axis)) return ` Rs.${v.toLocaleString("en-IN", { maximumFractionDigits: 2 })}`;
-          if (isQtyCol(y_axis))    return ` ${v.toLocaleString("en-IN")} units`;
-          return ` ${v.toLocaleString("en-IN")}`;
-        }
-      }
-    };
-    const opts = {
-      ...base,
-      indexAxis: horiz ? "y" : "x",
-      plugins: { ...base.plugins, tooltip: horiz ? horizTooltip : base.plugins.tooltip },
-      scales: horiz ? {
-        x: { ticks: { color: MUTED, font:{size:11}, callback: v => isAmountCol(y_axis) ? `Rs.${v.toLocaleString("en-IN")}` : v.toLocaleString("en-IN") }, grid: { color: BORDER } },
-        y: { ticks: { color: MUTED, font:{size:11} }, grid: { color: "#111" } }
-      } : base.scales
-    };
+    const isMulti = yAxes.length > 1;
+    const horiz   = !isMulti && data.length > 6;
+
+    if (!isMulti) {
+      // Single series — sort descending/ascending for visual clarity
+      const sorted   = [...data].sort((a,b) => horiz
+        ? (Number(a[yAxes[0]])||0) - (Number(b[yAxes[0]])||0)
+        : (Number(b[yAxes[0]])||0) - (Number(a[yAxes[0]])||0));
+      const sLabels  = sorted.map(r => formatLabel(String(r[x_axis] ?? "")));
+      const sValues  = sorted.map(r => Number(r[yAxes[0]]) || 0);
+      const bgColors = sorted.map((_, i) => COLORS[i % COLORS.length]);
+      const opts     = { ...baseOpts(yAxes, { horiz }), indexAxis: horiz ? "y" : "x" };
+      return (
+        <div>
+          <p style={{ color:"#ccc", fontSize:12, marginBottom:8 }}>{title}</p>
+          <div style={{ height: horiz ? Math.max(300, sorted.length * 38) : 320 }}>
+            <Bar
+              data={{ labels: sLabels, datasets:[{
+                label: yAxes[0].replace(/_/g," "),
+                data: sValues,
+                backgroundColor: bgColors,
+                borderRadius: 4,
+                borderSkipped: false,
+              }]}}
+              options={opts}
+            />
+          </div>
+        </div>
+      );
+    }
+
+    // Multi-series grouped bar
+    const datasets = yAxes.map((col, i) => ({
+      label: col.replace(/_/g," "),
+      data: data.map(r => Number(r[col]) || 0),
+      backgroundColor: COLORS[i % COLORS.length],
+      borderRadius: 3,
+      borderSkipped: false,
+    }));
     return (
       <div>
         <p style={{ color:"#ccc", fontSize:12, marginBottom:8 }}>{title}</p>
-        <div style={{ height: horiz ? Math.max(280, sorted.length * 36) : 300 }}>
-          <Bar data={{ labels: sLabels, datasets:[{ data: sValues, backgroundColor: bgColors, borderRadius: 4 }] }} options={opts} />
+        <div style={{ height: 340 }}>
+          <Bar data={{ labels, datasets }} options={baseOpts(yAxes)} />
         </div>
       </div>
     );
   }
 
+  // ── LINE ───────────────────────────────────────────────────────────────────
   if (chart_type === "line") {
-    const opts = chartDefaults(y_axis);
+    const isMulti = yAxes.length > 1;
+    const datasets = yAxes.map((col, i) => ({
+      label: col.replace(/_/g," "),
+      data: data.map(r => Number(r[col]) || 0),
+      borderColor: COLORS[i % COLORS.length],
+      backgroundColor: `${COLORS[i % COLORS.length]}${isMulti ? "18" : "28"}`,
+      pointBackgroundColor: COLORS[i % COLORS.length],
+      pointRadius: data.length > 24 ? 2 : 4,
+      pointHoverRadius: 7,
+      pointHoverBackgroundColor: "#fff",
+      tension: 0.35,
+      fill: !isMulti,
+      borderWidth: 2.5,
+    }));
     return (
       <div>
         <p style={{ color:"#ccc", fontSize:12, marginBottom:8 }}>{title}</p>
-        <div style={{ height: 300 }}>
-          <Line data={{ labels, datasets:[{ data: values, borderColor: "#4C9BE8", backgroundColor: "#4C9BE833", pointBackgroundColor: "#4C9BE8", pointRadius: 4, tension: 0.3, fill: true }] }} options={opts} />
+        <div style={{ height: 340 }}>
+          <Line data={{ labels, datasets }} options={baseOpts(yAxes)} />
         </div>
       </div>
     );
   }
 
-  if (chart_type === "pie") {
+  // ── DOUGHNUT / PIE ─────────────────────────────────────────────────────────
+  if (chart_type === "pie" || chart_type === "doughnut") {
+    const col    = yAxes[0];
+    const values = data.map(r => Number(r[col]) || 0);
+    const total  = values.reduce((a,b) => a+b, 0);
+    const bgColors = data.map((_, i) => COLORS[i % COLORS.length]);
     const opts = {
       responsive: true,
       maintainAspectRatio: false,
-      animation: false,
+      animation: { duration: 500 },
+      cutout: "55%",
       plugins: {
-        legend: { display: true, position: "right", labels: { color: MUTED, font: { size: 11 } } },
-        tooltip: { backgroundColor: SURFACE2, borderColor: BORDER, borderWidth: 1, titleColor: TEXT, bodyColor: MUTED,
-          callbacks: { label: ctx => ` ${ctx.label}: ${ctx.parsed.toLocaleString("en-IN")} (${ctx.dataset.data.reduce((a,b)=>a+b,0) > 0 ? ((ctx.parsed / ctx.dataset.data.reduce((a,b)=>a+b,0))*100).toFixed(1) : 0}%)` }
+        legend: {
+          display: true,
+          position: data.length > 7 ? "bottom" : "right",
+          labels: { color: MUTED, font: { size: 11 }, boxWidth: 12, padding: 12, usePointStyle: true }
+        },
+        tooltip: {
+          backgroundColor: SURFACE2, borderColor: BORDER, borderWidth: 1,
+          titleColor: TEXT, bodyColor: MUTED, padding: 12,
+          callbacks: {
+            label: ctx => {
+              const pct = total > 0 ? ((ctx.parsed / total) * 100).toFixed(1) : 0;
+              return ` ${ctx.label}: ${fmtVal(ctx.parsed, col)} (${pct}%)`;
+            }
+          }
         }
       }
     };
     return (
       <div>
         <p style={{ color:"#ccc", fontSize:12, marginBottom:8 }}>{title}</p>
-        <div style={{ height: 300 }}>
-          <Pie data={{ labels, datasets:[{ data: values, backgroundColor: bgColors, borderWidth: 0 }] }} options={opts} />
+        <div style={{ height: data.length > 7 ? 380 : 320 }}>
+          <Doughnut
+            data={{ labels, datasets:[{
+              data: values,
+              backgroundColor: bgColors,
+              borderWidth: 2,
+              borderColor: SURFACE,
+              hoverOffset: 10,
+            }]}}
+            options={opts}
+          />
         </div>
       </div>
     );
   }
 
+  // ── NUMBER KPI ─────────────────────────────────────────────────────────────
   if (chart_type === "number") {
-    const num = values[0] || 0;
+    const col = yAxes[0];
+    const num = Number(data[0]?.[col]) || 0;
     return (
       <div style={{ textAlign:"center", padding:"32px 0" }}>
         <p style={{ color:"#888", fontSize:12, marginBottom:8 }}>{title}</p>
         <p style={{ fontSize:52, fontWeight:800, color:ACCENT, fontFamily:"monospace", margin:0 }}>
-          {num.toLocaleString("en-IN")}
+          {fmtVal(num, col)}
         </p>
       </div>
     );
@@ -403,62 +483,76 @@ export default function App() {
   };
 
   const classifyViz = async (q, data) => {
-    const cols = Object.keys(data[0] || {});
-    const numericCols = cols.filter(c => data.some(r => typeof r[c] === "number"));
+    const cols        = Object.keys(data[0] || {});
+    const numericCols = cols.filter(c => !isIdCol(c) && data.some(r => typeof r[c] === "number"));
+    const textCols    = cols.filter(c => !numericCols.includes(c) && !isIdCol(c));
 
-    // ── Hard rules (no AI needed) ──────────────────────────────────────────────
-    // Single row → key metrics cards
-    if (data.length === 1) {
-      return { chart_type: "metrics", title: q };
-    }
-    // 3+ numeric columns → table gives better picture
-    if (numericCols.length >= 3) {
-      return { chart_type: "table", title: q };
-    }
-    // Queries about orders/details/list with id/date columns → table
-    const hasIdOrDate = cols.some(c => /order_id|id|date|style|sku|variant/i.test(c));
-    if (hasIdOrDate && cols.length >= 3) {
-      return { chart_type: "table", title: q };
-    }
-    // Exactly 2 cols and both text → table
-    if (cols.length === 2 && numericCols.length === 0) {
-      return { chart_type: "table", title: q };
-    }
+    // ── Hard rules ────────────────────────────────────────────────────────────
+    if (data.length === 1) return { chart_type: "metrics", title: q };
 
-    // ── AI decides for ambiguous cases ────────────────────────────────────────
+    const hasIdOrDate = cols.some(c => /order_id|_id|date|style|sku|variant/i.test(c));
+    if (hasIdOrDate && cols.length >= 3) return { chart_type: "table", title: q };
+    if (cols.length === 2 && numericCols.length === 0) return { chart_type: "table", title: q };
+
+    // ── AI decides ────────────────────────────────────────────────────────────
     const raw = await callClaude(
       [{ role:"user", content:
         `QUESTION: ${q}
 COLUMNS: ${cols.join(", ")}
+TEXT COLUMNS: ${textCols.join(", ") || "none"}
 NUMERIC COLUMNS: ${numericCols.join(", ") || "none"}
 SAMPLE: ${JSON.stringify(data.slice(0,3))}
 ROWS: ${data.length}
 
-Return ONLY valid JSON (no markdown):
-{"chart_type":"bar|line|pie|number|table","x_axis":"col_name","y_axis":"col_name","title":"short title"}
+Return ONLY valid JSON (no markdown, no extra keys).
 
-DECISION RULES — pick the FIRST matching rule:
-1. table  → 3+ columns with mix of text and multiple numbers (e.g. distributor + revenue + qty + orders)
-2. table  → results about specific orders, products, styles with multiple attributes
-3. table  → cohort/pivot/cross-tab style data
-4. table  → top-N list where user wants to see full detail (name + multiple metrics)
-5. line   → x_axis is a month/date/time column
-6. pie    → showing share/proportion/% breakdown with 6 or fewer categories
-7. bar    → any single category vs single numeric value — this is the DEFAULT
-8. number → exactly 1 row and 1 numeric column (a single KPI)
+If ONE numeric column:
+{"chart_type":"bar|line|pie|doughnut|number","x_axis":"col","y_axis":"col","title":"..."}
 
-IMPORTANT: Choose table when showing multiple metrics per entity gives more value than a single-metric chart.` }],
-      "Data visualization expert. Return only valid JSON.", 300);
+If TWO OR MORE numeric columns that make sense to compare visually (e.g. revenue vs quantity over months, or revenue by multiple distributors over time):
+{"chart_type":"line|bar","x_axis":"col","y_axes":["col1","col2"],"title":"..."}
+
+DECISION RULES:
+1. number    → exactly 1 row, 1 numeric col
+2. line      → x_axis is month/date AND 1-4 numeric cols → use y_axes array for multi-line
+3. bar       → 1 text col vs 1 numeric col, no time dimension — DEFAULT for comparisons
+4. bar       → 1 text col vs 2-3 numeric cols → grouped bar, use y_axes array
+5. doughnut  → proportion/share/% breakdown, ≤8 categories
+6. table     → 4+ numeric cols, or detailed row-level data, or pivot/cohort data
+
+CRITICAL: For multi-series (y_axes), pick chart_type line if x is time, bar otherwise.
+NEVER use y_axes for pie or doughnut.` }],
+      "Data visualization expert. Return only valid JSON.", 400);
     try {
       const parsed = JSON.parse(raw.replace(/```json/gi,"").replace(/```/g,"").trim());
-      // Safety: if y_axis col has no numeric data, force table
-      if (parsed.chart_type !== "table" && parsed.chart_type !== "metrics" && parsed.y_axis) {
-        const hasNum = data.some(r => typeof r[parsed.y_axis] === "number");
-        if (!hasNum) parsed.chart_type = "table";
+
+      // Normalise: if AI returned y_axis string but multiple numeric cols exist for line/bar, keep as-is
+      // Validate y_axes entries all have numeric data
+      if (parsed.y_axes) {
+        parsed.y_axes = parsed.y_axes.filter(col => data.some(r => typeof r[col] === "number"));
+        if (parsed.y_axes.length === 0) parsed.y_axes = [numericCols[0]];
+        if (parsed.y_axes.length === 1) {
+          parsed.y_axis = parsed.y_axes[0];
+          delete parsed.y_axes;
+        }
       }
+
+      // Safety: single y_axis must have numeric data
+      if (parsed.y_axis && !parsed.y_axes) {
+        const hasNum = data.some(r => typeof r[parsed.y_axis] === "number");
+        if (!hasNum) return { chart_type:"table", title:q };
+      }
+
+      // Too many rows for pie/doughnut → switch to bar
+      if ((parsed.chart_type === "pie" || parsed.chart_type === "doughnut") && data.length > 10) {
+        parsed.chart_type = "bar";
+      }
+
       return parsed;
     } catch {
-      return { chart_type:"bar", x_axis:cols[0], y_axis:numericCols[0]||cols[1]||cols[0], title:q };
+      const xCol = textCols[0] || cols[0];
+      const yCol = numericCols[0] || cols[1] || cols[0];
+      return { chart_type:"bar", x_axis:xCol, y_axis:yCol, title:q };
     }
   };
 
@@ -470,7 +564,7 @@ IMPORTANT: Choose table when showing multiple metrics per entity gives more valu
   };
 
   const executeSQL = async (sql) => {
-    const res = await fetch("https://technochat-server.onrender.com/api/query", {
+    const res = await fetch("http://localhost:3001/api/query", {
       method:"POST",
       headers:{ "Content-Type":"application/json" },
       body: JSON.stringify({ sql }),
